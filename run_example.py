@@ -17,14 +17,14 @@ from dddm import (
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--epochs", type=int, default=1000)
+    p.add_argument("--epochs", type=int, default=10000)
     p.add_argument("--batch", type=int, default=512)
     p.add_argument("--beta", type=float, default=0.1)
     p.add_argument("--lam", type=float, default=1.0)
     p.add_argument("--m", type=int, default=8)
     p.add_argument("--w-bias", type=float, default=0.0, dest="w_bias")
     p.add_argument("--steps", type=int, default=20)
-    p.add_argument("--device", type=str, default="cpu")
+    p.add_argument("--device", type=str, default="mps")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=str, default="./out")
     args = p.parse_args()

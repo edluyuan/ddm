@@ -31,6 +31,10 @@ class DDDMMLP(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden, hidden),
             nn.SiLU(),
+            nn.Linear(hidden, hidden),
+            nn.SiLU(),
+            nn.Linear(hidden, hidden),
+            nn.SiLU(),
             nn.Linear(hidden, 2),
         )
 
