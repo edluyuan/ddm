@@ -1,7 +1,9 @@
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from typing import Optional
 
 import torch
+from tqdm.auto import tqdm
 
 from .data import sample_gmm
 from .losses import generalized_energy_terms, sigmoid_weight
@@ -20,6 +22,10 @@ class TrainConfig:
     batch: int = 512
     device: str = "cpu"
     seed: int = 0
+    log_interval: int = 200
+    use_wandb: bool = False
+    wandb_project: str = "dddm"
+    wandb_run_name: Optional[str] = None
 
 
 def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
@@ -31,7 +37,23 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
     model = DDDMMLP().to(device)
     opt = torch.optim.Adam(model.parameters(), lr=config.lr)
 
-    for it in range(1, config.epochs + 1):
+    wandb_run = None
+    if config.use_wandb:
+        try:
+            import wandb
+        except ImportError as exc:  # pragma: no cover - defensive import guard
+            raise RuntimeError(
+                "Weights & Biases is not installed but `use_wandb` was set to True."
+            ) from exc
+
+        wandb_run = wandb.init(
+            project=config.wandb_project,
+            name=config.wandb_run_name,
+            config=asdict(config),
+        )
+
+    progress = tqdm(range(1, config.epochs + 1), desc="Training", unit="step")
+    for it in progress:
         x0 = sample_gmm(config.batch, device=device)
         t = torch.rand(config.batch, device=device)
         eps = torch.randn(config.batch, 2, device=device)
@@ -53,10 +75,31 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
         loss.backward()
         opt.step()
 
-        if it % 200 == 0 or it == 1:
-            print(
-                f"[{it:05d}] loss={loss.item():.4f}  conf={conf.item():.4f}  inter={inter.item():.4f}  w~{w.item():.3f}"
+        metrics = {
+            "loss": loss.item(),
+            "confidence": conf.item(),
+            "interaction": inter.item(),
+            "weight": w.item(),
+        }
+
+        if wandb_run is not None:
+            wandb_run.log(metrics, step=it)
+
+        if it % config.log_interval == 0 or it == 1:
+            progress.set_postfix(
+                {
+                    "loss": f"{metrics['loss']:.4f}",
+                    "conf": f"{metrics['confidence']:.4f}",
+                    "inter": f"{metrics['interaction']:.4f}",
+                    "w~": f"{metrics['weight']:.3f}",
+                }
+            )
+            progress.write(
+                f"[{it:05d}] loss={metrics['loss']:.4f}  conf={metrics['confidence']:.4f}  "
+                f"inter={metrics['interaction']:.4f}  w~{metrics['weight']:.3f}"
             )
 
     torch.save({"model": model.state_dict(), "config": config.__dict__}, os.path.join(outdir, "model.pt"))
+    if wandb_run is not None:
+        wandb_run.finish()
     return model
