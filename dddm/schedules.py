@@ -19,7 +19,10 @@ def forward_marginal_sample(x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
     alpha_t, sigma_t = alpha_sigma(t)
     while eps.ndim < x0.ndim:
         eps = eps.unsqueeze(-1)
-    return alpha_t[..., None] * x0 + sigma_t[..., None] * eps
+    while alpha_t.ndim < x0.ndim:
+        alpha_t = alpha_t.unsqueeze(-1)
+        sigma_t = sigma_t.unsqueeze(-1)
+    return alpha_t * x0 + sigma_t * eps
 
 
 def gaussian_bridge_mu_sigma(
