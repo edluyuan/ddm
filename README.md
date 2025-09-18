@@ -1,4 +1,4 @@
-# Distributional Diffusion on 2D (faithful to the paper)
+# Distributional Diffusion on 2D and CIFAR10
 
 This minimal PyTorch package implements the **Distributional Diffusion Model (DDDM)**
 from *"Distributional Diffusion Models with Scoring Rules"* (De Bortoli et al., 2025)
