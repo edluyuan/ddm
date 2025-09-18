@@ -2,8 +2,10 @@
 import argparse
 import json
 import os
+from typing import Any, Dict
 
 import torch
+import yaml
 
 from dddm import (
     TrainConfig,
@@ -15,8 +17,17 @@ from dddm import (
 )
 
 
+def _load_yaml_config(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):  # pragma: no cover - defensive guard
+        raise ValueError(f"Config file {path} must contain a mapping at the top level")
+    return data
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
+    p.add_argument("--config", type=str, default=None, help="Path to a YAML config file")
     p.add_argument("--epochs", type=int, default=10000)
     p.add_argument("--batch", type=int, default=512)
     p.add_argument("--beta", type=float, default=0.1)
@@ -27,6 +38,16 @@ def main() -> None:
     p.add_argument("--device", type=str, default="mps")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=str, default="./out")
+    p.add_argument("--log-interval", type=int, default=200, dest="log_interval")
+    p.add_argument("--wandb", action="store_true", dest="use_wandb")
+    p.add_argument("--wandb-project", type=str, default="dddm")
+    p.add_argument("--wandb-name", type=str, default=None)
+    preliminary_args, _ = p.parse_known_args()
+    if preliminary_args.config:
+        cfg_defaults = _load_yaml_config(preliminary_args.config)
+        valid_keys = {action.dest for action in p._actions if action.dest != argparse.SUPPRESS}
+        filtered = {k: v for k, v in cfg_defaults.items() if k in valid_keys}
+        p.set_defaults(**filtered)
     args = p.parse_args()
 
     cfg = TrainConfig(
@@ -38,6 +59,10 @@ def main() -> None:
         batch=args.batch,
         device=args.device,
         seed=args.seed,
+        log_interval=args.log_interval,
+        use_wandb=args.use_wandb,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_name,
     )
     os.makedirs(args.out, exist_ok=True)
 

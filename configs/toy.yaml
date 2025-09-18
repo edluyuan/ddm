@@ -1,0 +1,15 @@
+# Configuration for the toy 2D GMM experiment.
+out: ./out/toy_example
+epochs: 10000
+batch: 512
+beta: 0.1
+lam: 1.0
+m: 8
+w_bias: 0.0
+steps: 40
+device: cpu
+seed: 0
+log_interval: 200
+use_wandb: false
+wandb_project: dddm-toy
+wandb_run_name: null

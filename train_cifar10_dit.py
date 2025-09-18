@@ -3,10 +3,13 @@
 import argparse
 import json
 import os
+from typing import Any, Dict
 
 import torch
+import yaml
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import utils as tv_utils
+from tqdm.auto import tqdm
 
 from dddm.data import CIFAR10DataConfig, build_cifar10_dataloaders
 from dddm.losses import generalized_energy_terms, sigmoid_weight
@@ -19,6 +22,14 @@ from dddm.metrics import (
 from dddm.model import DDDMDiT
 from dddm.schedules import forward_marginal_sample
 from dddm.sampling import sample_dddm
+
+
+def _load_yaml_config(path: str) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):  # pragma: no cover - defensive guard
+        raise ValueError(f"Config file {path} must contain a mapping at the top level")
+    return data
 
 
 def set_seed(seed: int) -> None:
@@ -71,9 +82,29 @@ def train(args: argparse.Namespace) -> None:
     fid_embedder: InceptionEmbedding | None = None
     fid_stats: tuple[torch.Tensor, torch.Tensor] | None = None
 
+    wandb_run = None
+    if getattr(args, "use_wandb", False):
+        try:
+            import wandb
+        except ImportError as exc:  # pragma: no cover - defensive import guard
+            raise RuntimeError(
+                "Weights & Biases is not installed but `--wandb` was set."
+            ) from exc
+
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_name,
+            config=vars(args),
+        )
+
+    steps_per_epoch = len(train_loader)
+    total_steps = steps_per_epoch * args.epochs
+    progress = tqdm(total=total_steps, desc="Training", unit="step")
+
     for epoch in range(1, args.epochs + 1):
+        progress.set_description(f"Epoch {epoch}/{args.epochs}")
         model.train()
-        for x0, _ in train_loader:
+        for epoch_step, (x0, _) in enumerate(train_loader, start=1):
             x0 = x0.to(device)
             B = x0.size(0)
             t = torch.rand(B, device=device)
@@ -105,10 +136,33 @@ def train(args: argparse.Namespace) -> None:
             opt.step()
 
             global_step += 1
-            if global_step % args.log_every == 0:
-                print(
-                    f"[epoch {epoch:03d} step {global_step:06d}] loss={loss.item():.4f} "
-                    f"conf={conf.item():.4f} inter={inter.item():.4f} w~{w.item():.3f}"
+            progress.update(1)
+
+            metrics = {
+                "train/loss": loss.item(),
+                "train/confidence": conf.item(),
+                "train/interaction": inter.item(),
+                "train/weight": w.item(),
+                "epoch": epoch,
+            }
+            if wandb_run is not None:
+                wandb_run.log({**metrics, "train/lr": opt.param_groups[0]["lr"]}, step=global_step)
+
+            if global_step % args.log_every == 0 or epoch_step == 1:
+                progress.set_postfix(
+                    {
+                        "loss": f"{metrics['train/loss']:.4f}",
+                        "conf": f"{metrics['train/confidence']:.4f}",
+                        "inter": f"{metrics['train/interaction']:.4f}",
+                        "w~": f"{metrics['train/weight']:.3f}",
+                    }
+                )
+                progress.write(
+                    f"[epoch {epoch:03d} step {global_step:06d}] "
+                    f"loss={metrics['train/loss']:.4f} "
+                    f"conf={metrics['train/confidence']:.4f} "
+                    f"inter={metrics['train/interaction']:.4f} "
+                    f"w~{metrics['train/weight']:.3f}"
                 )
 
         if epoch % args.ckpt_every == 0 or epoch == args.epochs:
@@ -125,13 +179,23 @@ def train(args: argparse.Namespace) -> None:
                     device=device,
                     max_items=args.fid_samples,
                 )
-            metrics = evaluate(model, args, eval_loader, fid_embedder, fid_stats)
-            print(
-                f"[epoch {epoch:03d}] FID={metrics['fid']:.3f} "
-                f"MMD={metrics['mmd']:.6f}"
+            eval_metrics = evaluate(model, args, eval_loader, fid_embedder, fid_stats)
+            progress.write(
+                f"[epoch {epoch:03d}] FID={eval_metrics['fid']:.3f} "
+                f"MMD={eval_metrics['mmd']:.6f}"
             )
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        "eval/fid": eval_metrics["fid"],
+                        "eval/mmd": eval_metrics["mmd"],
+                        "epoch": epoch,
+                    },
+                    step=global_step,
+                )
 
     save_checkpoint(model, args, args.out, "model_final.pt")
+    progress.close()
 
     with open(os.path.join(args.out, "config.json"), "w") as f:
         json.dump(vars(args), f, indent=2)
@@ -154,6 +218,9 @@ def train(args: argparse.Namespace) -> None:
         grid = tv_utils.make_grid((samples + 1.0) / 2.0, nrow=grid_rows)
         tv_utils.save_image(grid, os.path.join(args.out, "samples.png"))
         print(f"Saved samples and checkpoints to {args.out}")
+
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 def evaluate(
@@ -201,6 +268,7 @@ def evaluate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=str, default=None, help="Path to a YAML config file")
     parser.add_argument("--data-dir", type=str, default="./data")
     parser.add_argument("--out", type=str, default="./cifar10_dit_out")
     parser.add_argument("--epochs", type=int, default=10)
@@ -234,6 +302,16 @@ def main() -> None:
     parser.add_argument("--fid-samples", type=int, default=10000, help="Number of real/fake images for FID")
     parser.add_argument("--mmd-samples", type=int, default=2048, help="Number of images used for MMD")
     parser.add_argument("--mmd-sigma", type=float, default=1.0, help="RBF kernel bandwidth for MMD")
+    parser.add_argument("--wandb", action="store_true", dest="use_wandb", help="Enable Weights & Biases logging")
+    parser.add_argument("--wandb-project", type=str, default="dddm")
+    parser.add_argument("--wandb-name", type=str, default=None)
+
+    preliminary_args, _ = parser.parse_known_args()
+    if preliminary_args.config:
+        cfg_defaults = _load_yaml_config(preliminary_args.config)
+        valid_keys = {action.dest for action in parser._actions if action.dest != argparse.SUPPRESS}
+        filtered = {k: v for k, v in cfg_defaults.items() if k in valid_keys}
+        parser.set_defaults(**filtered)
     args = parser.parse_args()
 
     if args.m < 2:
@@ -242,6 +320,8 @@ def main() -> None:
         parser.error("--eval-samples must be positive when evaluation is enabled")
     if args.eval_batch <= 0:
         parser.error("--eval-batch must be positive")
+    if args.log_every <= 0:
+        parser.error("--log-every must be positive")
 
     train(args)
 
