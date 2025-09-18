@@ -1,10 +1,18 @@
+"""Datasets and dataloaders used throughout the project."""
+
+from __future__ import annotations
+
+import itertools
+from dataclasses import dataclass
+from typing import Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-import numpy as np
-import itertools
-import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
 
 class GMM2D(torch.utils.data.IterableDataset):
     """Two-Gaussian mixture dataset used in Section 6.1."""
@@ -157,6 +165,96 @@ class GMM(nn.Module):
             torch.Tensor: Generated samples.
         """
         return self.distribution.sample(shape)
+
+
+@dataclass
+class CIFAR10DataConfig:
+    """Configuration for CIFAR-10 dataloaders.
+
+    Attributes:
+        data_dir: Root directory where the dataset is stored.
+        batch_size: Number of images per batch.
+        num_workers: Number of worker processes for loading data.
+        image_size: Target spatial size for the images.
+        augment: Whether to apply standard CIFAR-10 augmentations.
+        download: Whether to download the dataset if not present.
+        drop_last: Whether to drop the last incomplete batch from the training loader.
+        pin_memory: Whether to pin memory in the training loader (useful for GPUs).
+    """
+
+    data_dir: str = "./data"
+    batch_size: int = 128
+    num_workers: int = 4
+    image_size: int = 32
+    augment: bool = True
+    download: bool = True
+    drop_last: bool = True
+    pin_memory: bool = True
+
+
+def _build_cifar10_transforms(config: CIFAR10DataConfig) -> Tuple[transforms.Compose, transforms.Compose]:
+    """Construct the training and evaluation transforms for CIFAR-10."""
+
+    normalize = transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+
+    resize = []
+    if config.image_size != 32:
+        resize.append(transforms.Resize(config.image_size))
+
+    train_tfms = []
+    if config.augment:
+        train_tfms.extend(
+            [
+                transforms.RandomCrop(32, padding=4, padding_mode="reflect"),
+                transforms.RandomHorizontalFlip(),
+            ]
+        )
+    train_tfms.extend(resize)
+    train_tfms.extend([transforms.ToTensor(), normalize])
+
+    eval_tfms = resize + [transforms.ToTensor(), normalize]
+
+    return transforms.Compose(train_tfms), transforms.Compose(eval_tfms)
+
+
+def build_cifar10_dataloaders(
+    config: CIFAR10DataConfig,
+) -> tuple[DataLoader, DataLoader]:
+    """Create train/test dataloaders for CIFAR-10 using a shared configuration."""
+
+    train_tfms, eval_tfms = _build_cifar10_transforms(config)
+
+    train_set = datasets.CIFAR10(
+        root=config.data_dir,
+        train=True,
+        download=config.download,
+        transform=train_tfms,
+    )
+    test_set = datasets.CIFAR10(
+        root=config.data_dir,
+        train=False,
+        download=config.download,
+        transform=eval_tfms,
+    )
+
+    train_loader = DataLoader(
+        train_set,
+        batch_size=config.batch_size,
+        shuffle=True,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        drop_last=config.drop_last,
+    )
+    test_loader = DataLoader(
+        test_set,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        drop_last=False,
+    )
+
+    return train_loader, test_loader
 
 def plot_contours(log_prob_func, samples=None, ax=None,
                   bounds=(-25.0, 25.0), grid_width_n_points=100,
