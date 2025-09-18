@@ -1,3 +1,7 @@
 torch
 matplotlib
+numpy
 torchvision
+tqdm
+wandb
+pyyaml

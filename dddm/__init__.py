@@ -11,7 +11,12 @@ from .metrics import (
     frechet_distance,
     rbf_mmd2,
 )
-from .utils import save_scatter
+from .utils import (
+    apply_yaml_config_defaults,
+    load_yaml_config,
+    save_scatter,
+    seed_everything,
+)
 from .model import DDDMMLP, DDDMDiT
 
 __all__ = [
@@ -31,6 +36,9 @@ __all__ = [
     "compute_image_mmd",
     "frechet_distance",
     "save_scatter",
+    "load_yaml_config",
+    "apply_yaml_config_defaults",
+    "seed_everything",
     "DDDMMLP",
     "DDDMDiT",
 ]

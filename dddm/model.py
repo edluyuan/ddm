@@ -39,10 +39,10 @@ class TimeFeat(nn.Module):
 
 
 class DDDMMLP(nn.Module):
-    """Distributional denoiser `\hat{x}_θ(t, x_t, ξ)`.
+    r"""Distributional denoiser ``\hat{x}_θ(t, x_t, ξ)``.
 
-    Small MLP that takes `[x_t (2), ξ (2), time-features]` and outputs a 2D
-    sample `\hat{x}_0`.
+    Small MLP that takes ``[x_t (2), ξ (2), time-features]`` and outputs a 2D
+    sample ``\hat{x}_0``.
     """
 
     def __init__(self, time_dim: int = 32, hidden: int = 128) -> None:
