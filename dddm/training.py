@@ -32,7 +32,7 @@ class TrainConfig:
     log_interval: int = 200
     use_wandb: bool = False
     wandb_project: str = "dddm"
-    wandb_run_name: Optional[str] = None
+    wandb_name: Optional[str] = None
 
 
 def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
