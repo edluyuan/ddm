@@ -48,7 +48,7 @@ def main() -> None:
         log_interval=args.log_interval,
         use_wandb=args.use_wandb,
         wandb_project=args.wandb_project,
-        wandb_run_name=args.wandb_name,
+        wandb_name=args.wandb_name,
     )
     os.makedirs(args.out, exist_ok=True)
 
