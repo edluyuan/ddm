@@ -24,7 +24,7 @@ def main() -> None:
     p.add_argument("--m", type=int, default=8)
     p.add_argument("--w-bias", type=float, default=0.0, dest="w_bias")
     p.add_argument("--steps", type=int, default=20)
-    p.add_argument("--device", type=str, default="mps")
+    p.add_argument("--device", type=str, default="cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=str, default="./out")
     p.add_argument("--log-interval", type=int, default=200, dest="log_interval")
