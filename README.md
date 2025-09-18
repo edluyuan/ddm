@@ -24,7 +24,7 @@ python run_example.py --epochs 2000 --batch 512 --beta 0.1 --lam 1.0 --m 8 --ste
 ```
 *Tip:* Start with fewer epochs to verify end‑to‑end, then increase.
 
-## How this code respects the math (equation mapping)
+## How this code respects the math (san checks for now:)
 - **Forward marginals** (eq. **(2)**) are used to corrupt data:  
   `x_t = α_t x_0 + σ_t ε`, with schedule **(3)**: `α(t) = 1−t`, `σ(t)=t`.
 - **Bridge transition** (eq. **(4)**) implemented exactly in `gaussian_bridge_mu_sigma(...)`:
