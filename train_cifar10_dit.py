@@ -3,10 +3,8 @@
 import argparse
 import json
 import os
-from typing import Any, Dict
 
 import torch
-import yaml
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import utils as tv_utils
 from tqdm.auto import tqdm
@@ -22,14 +20,7 @@ from dddm.metrics import (
 from dddm.model import DDDMDiT
 from dddm.schedules import forward_marginal_sample
 from dddm.sampling import sample_dddm
-
-
-def _load_yaml_config(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
-    if not isinstance(data, dict):  # pragma: no cover - defensive guard
-        raise ValueError(f"Config file {path} must contain a mapping at the top level")
-    return data
+from dddm.utils import apply_config_overrides, maybe_init_wandb
 
 
 def set_seed(seed: int) -> None:
@@ -82,20 +73,13 @@ def train(args: argparse.Namespace) -> None:
     fid_embedder: InceptionEmbedding | None = None
     fid_stats: tuple[torch.Tensor, torch.Tensor] | None = None
 
-    wandb_run = None
-    if getattr(args, "use_wandb", False):
-        try:
-            import wandb
-        except ImportError as exc:  # pragma: no cover - defensive import guard
-            raise RuntimeError(
-                "Weights & Biases is not installed but `--wandb` was set."
-            ) from exc
-
-        wandb_run = wandb.init(
-            project=args.wandb_project,
-            name=args.wandb_name,
-            config=vars(args),
-        )
+    wandb_run = maybe_init_wandb(
+        args.use_wandb,
+        project=args.wandb_project,
+        run_name=args.wandb_name,
+        config=vars(args),
+        import_error_message="Weights & Biases is not installed but `--wandb` was set.",
+    )
 
     steps_per_epoch = len(train_loader)
     total_steps = steps_per_epoch * args.epochs
@@ -124,8 +108,8 @@ def train(args: argparse.Namespace) -> None:
                 x0hat.view(B, args.m, -1),
                 x0.view(B, -1),
                 beta=args.beta,
-                lam=args.lam,
             )
+            # Algorithm 1 / eq. (14): generalised energy score with sigmoid weighting.
             w = sigmoid_weight(t, bias=args.w_bias).mean()
             loss = w * (conf - (args.lam / (2.0 * (args.m - 1))) * inter)
 
@@ -308,10 +292,12 @@ def main() -> None:
 
     preliminary_args, _ = parser.parse_known_args()
     if preliminary_args.config:
-        cfg_defaults = _load_yaml_config(preliminary_args.config)
-        valid_keys = {action.dest for action in parser._actions if action.dest != argparse.SUPPRESS}
-        filtered = {k: v for k, v in cfg_defaults.items() if k in valid_keys}
-        parser.set_defaults(**filtered)
+        overrides = apply_config_overrides(parser, preliminary_args.config)
+        if overrides:
+            print(
+                f"Loaded {len(overrides)} setting(s) from {preliminary_args.config}: "
+                + ", ".join(sorted(overrides.keys()))
+            )
     args = parser.parse_args()
 
     if args.m < 2:

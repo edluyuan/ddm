@@ -138,7 +138,7 @@ def compute_fid(
 
 
 def rbf_mmd2(x: torch.Tensor, y: torch.Tensor, sigma: float = 1.0) -> torch.Tensor:
-    """Unbiased MMD^2 with RBF kernel, σ fixed."""
+    """Unbiased MMD^2 with the RBF kernel (paper eq. (9b)/(10))."""
 
     def pdist2(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         a2 = (a * a).sum(-1).unsqueeze(-1)

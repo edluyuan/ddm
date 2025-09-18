@@ -1,28 +1,19 @@
-"""Minimal example to train & sample on 2D GMM, matching Section 6.1."""
+"""Minimal toy experiment for Section 6.1 of the DDDM paper."""
 import argparse
 import json
 import os
-from typing import Any, Dict
 
 import torch
-import yaml
 
 from dddm import (
     TrainConfig,
-    train_dddm,
+    rbf_mmd2,
     sample_dddm,
     sample_gmm,
-    rbf_mmd2,
     save_scatter,
+    train_dddm,
 )
-
-
-def _load_yaml_config(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
-    if not isinstance(data, dict):  # pragma: no cover - defensive guard
-        raise ValueError(f"Config file {path} must contain a mapping at the top level")
-    return data
+from dddm.utils import apply_config_overrides
 
 
 def main() -> None:
@@ -44,10 +35,12 @@ def main() -> None:
     p.add_argument("--wandb-name", type=str, default=None)
     preliminary_args, _ = p.parse_known_args()
     if preliminary_args.config:
-        cfg_defaults = _load_yaml_config(preliminary_args.config)
-        valid_keys = {action.dest for action in p._actions if action.dest != argparse.SUPPRESS}
-        filtered = {k: v for k, v in cfg_defaults.items() if k in valid_keys}
-        p.set_defaults(**filtered)
+        overrides = apply_config_overrides(p, preliminary_args.config)
+        if overrides:
+            print(
+                f"Loaded {len(overrides)} setting(s) from {preliminary_args.config}: "
+                + ", ".join(sorted(overrides.keys()))
+            )
     args = p.parse_args()
 
     cfg = TrainConfig(

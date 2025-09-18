@@ -1,4 +1,7 @@
+"""Neural architectures used by the DDDM training/evaluation code."""
+
 import math
+
 import torch
 import torch.nn as nn
 
@@ -39,7 +42,7 @@ class TimeFeat(nn.Module):
 
 
 class DDDMMLP(nn.Module):
-    """Distributional denoiser `\hat{x}_θ(t, x_t, ξ)`.
+    r"""Distributional denoiser ``\hat{x}_θ(t, x_t, ξ)``.
 
     Small MLP that takes `[x_t (2), ξ (2), time-features]` and outputs a 2D
     sample `\hat{x}_0`.

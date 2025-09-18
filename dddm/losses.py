@@ -1,11 +1,20 @@
-import torch
+"""Loss utilities mirroring the generalised energy score from the paper."""
+
+from __future__ import annotations
+
 from typing import Tuple
+
+import torch
 
 
 def generalized_energy_terms(
-    x0hats: torch.Tensor, x0: torch.Tensor, beta: float, lam: float
+    x0hats: torch.Tensor, x0: torch.Tensor, beta: float
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Generalized energy score terms for one minibatch."""
+    """Confinement and interaction terms from eq. (12).
+
+    The ``λ`` weighting from eq. (14) is applied by the caller so the raw
+    components can be reused across toy and CIFAR training loops.
+    """
     B, m, _ = x0hats.shape
     diff = x0[:, None, :] - x0hats
     if beta == 2.0:
@@ -26,7 +35,7 @@ def generalized_energy_terms(
 
 
 def sigmoid_weight(t: torch.Tensor, bias: float = 0.0) -> torch.Tensor:
-    """w(t) = 1 / (1 + exp(b - log(α(t)^2 / σ(t)^2)))."""
+    """Sigmoid weighting from Section 4.2 (Kingma et al., 2021)."""
     from .schedules import alpha_sigma
 
     a, s = alpha_sigma(t)

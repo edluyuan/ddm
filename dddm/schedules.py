@@ -1,21 +1,19 @@
+"""Noise schedules and bridge dynamics mirroring the paper's notation."""
+
+from __future__ import annotations
+
 import torch
 
-# ---------- Utilities: schedule α(t), σ(t) per eq. (3) ----------
 
-def alpha_sigma(t: torch.Tensor):
-    """Flow-matching noise schedule (paper eq. (3)).
+def alpha_sigma(t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Flow-matching noise schedule (paper eq. (3))."""
 
-    Args:
-        t: shape [B] or []
-
-    Returns:
-        α, σ broadcast to t.shape
-    """
     return 1.0 - t, t
 
 
-def forward_marginal_sample(x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor):
-    """x_t = α_t x_0 + σ_t ε, with ε ~ N(0,I) (paper eq. (2))."""
+def forward_marginal_sample(x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
+    """Sample ``x_t`` from the forward process ``p(x_t | x_0)`` (eq. (2))."""
+
     alpha_t, sigma_t = alpha_sigma(t)
     while eps.ndim < x0.ndim:
         eps = eps.unsqueeze(-1)
@@ -31,25 +29,24 @@ def gaussian_bridge_mu_sigma(
     x0: torch.Tensor,
     xt: torch.Tensor,
     eps_churn: float = 1.0,
-):
-    """Bridge transition parameters μ_{s,t}, Σ_{s,t} (eq. (4)).
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Bridge parameters ``(μ_{s,t}, Σ_{s,t})`` from eq. (4).
 
-    Args:
-        s, t: scalars or [B] with ``0 <= s < t <= 1``
-        x0, xt: [..., d]
-        eps_churn ε in [0,1]
-
-    Returns:
-        μ [..., d], std [..., 1] where Σ = std^2 * I
+    ``eps_churn`` implements the stochasticity factor ``ε`` in Algorithm 2.
+    The helper returns the mean and isotropic standard deviation of the
+    Gaussian bridge used during sampling.
     """
+
     a_s, sig_s = alpha_sigma(s)
     a_t, sig_t = alpha_sigma(t)
-    eps = 1e-8  # avoid division by zero
-    r11 = (a_t / (a_s + eps)) * ((sig_s**2) / (sig_t**2 + eps))
-    r12 = (a_t / (a_s + eps)) * ((sig_s**2) / (sig_t**2 + eps))**2
-    r21 = (a_t / (a_s + eps)) ** 2 * ((sig_s**2) / (sig_t**2 + eps))
-    r22 = (a_t / (a_s + eps)) ** 2 * ((sig_s**2) / (sig_t**2 + eps))**2
-    r01 = (sig_s**2) / (sig_t**2 + eps)
+    eps = torch.finfo(sig_s.dtype).eps
+    sig_ratio = (sig_s**2) / (sig_t**2 + eps)
+    a_ratio = a_t / (a_s + eps)
+    r11 = a_ratio * sig_ratio
+    r12 = a_ratio * sig_ratio**2
+    r21 = (a_ratio**2) * sig_ratio
+    r22 = (a_ratio**2) * sig_ratio**2
+    r01 = sig_ratio
     e2 = eps_churn**2
 
     def bcast(x: torch.Tensor) -> torch.Tensor:
