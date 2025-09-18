@@ -56,7 +56,7 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
 
         wandb_run = wandb.init(
             project=config.wandb_project,
-            name=config.wandb_run_name,
+            name=config.wandb_name,
             config=asdict(config),
         )
 
