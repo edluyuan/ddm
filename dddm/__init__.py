@@ -1,4 +1,4 @@
-from .training import TrainConfig, train_dddm
+from .training import TrainConfig, distributional_training_step, train_dddm
 from .sampling import sample_dddm
 from .data import GMM2D, CIFAR10DataConfig, build_cifar10_dataloaders, sample_gmm
 from .metrics import (
@@ -17,6 +17,7 @@ from .model import DDDMMLP, DDDMDiT
 __all__ = [
     "TrainConfig",
     "train_dddm",
+    "distributional_training_step",
     "sample_dddm",
     "sample_gmm",
     "CIFAR10DataConfig",

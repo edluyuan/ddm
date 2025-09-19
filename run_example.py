@@ -27,7 +27,6 @@ def main() -> None:
     p.add_argument("--device", type=str, default="mps")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=str, default="./out")
-    p.add_argument("--log-interval", type=int, default=200, dest="log_interval")
     p.add_argument("--wandb", action="store_true", dest="use_wandb")
     p.add_argument("--wandb-project", type=str, default="dddm")
     p.add_argument("--wandb-name", type=str, default=None)
@@ -42,7 +41,6 @@ def main() -> None:
         batch=args.batch,
         device=args.device,
         seed=args.seed,
-        log_interval=args.log_interval,
         use_wandb=args.use_wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_name,
