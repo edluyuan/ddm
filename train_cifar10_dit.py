@@ -1,15 +1,17 @@
 """Train a DiT-backed Distributional Diffusion Model on CIFAR-10."""
 
+from collections import defaultdict
 import argparse
 import json
 import os
+from typing import Dict
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import utils as tv_utils
+from tqdm.auto import tqdm
 
 from dddm.data import CIFAR10DataConfig, build_cifar10_dataloaders
-from dddm.losses import generalized_energy_terms, sigmoid_weight
 from dddm.metrics import (
     InceptionEmbedding,
     compute_activation_statistics,
@@ -17,8 +19,8 @@ from dddm.metrics import (
     frechet_distance,
 )
 from dddm.model import DDDMDiT
-from dddm.schedules import forward_marginal_sample
 from dddm.sampling import sample_dddm
+from dddm.training import distributional_training_step
 
 
 def set_seed(seed: int) -> None:
@@ -32,6 +34,23 @@ def save_checkpoint(model: torch.nn.Module, args: argparse.Namespace, outdir: st
         "config": vars(args),
     }
     torch.save(payload, os.path.join(outdir, name))
+
+
+def maybe_init_wandb(args: argparse.Namespace):
+    if not getattr(args, "wandb", False):
+        return None
+    try:
+        import wandb
+    except ImportError as exc:  # pragma: no cover - defensive import guard
+        raise RuntimeError(
+            "Weights & Biases is not installed but `--wandb` was provided."
+        ) from exc
+
+    return wandb.init(
+        project=args.wandb_project,
+        name=args.wandb_name,
+        config=vars(args),
+    )
 
 
 def train(args: argparse.Namespace) -> None:
@@ -71,32 +90,30 @@ def train(args: argparse.Namespace) -> None:
     fid_embedder: InceptionEmbedding | None = None
     fid_stats: tuple[torch.Tensor, torch.Tensor] | None = None
 
+    wandb_run = maybe_init_wandb(args)
+
     for epoch in range(1, args.epochs + 1):
         model.train()
-        for x0, _ in train_loader:
+        epoch_sums: Dict[str, float] = defaultdict(float)
+        num_batches = 0
+        progress = tqdm(
+            train_loader,
+            desc=f"Epoch {epoch}/{args.epochs}",
+            unit="batch",
+            dynamic_ncols=True,
+        )
+        for x0, _ in progress:
             x0 = x0.to(device)
-            B = x0.size(0)
-            t = torch.rand(B, device=device)
-            eps = torch.randn_like(x0)
-            xt = forward_marginal_sample(x0, t, eps)
 
-            xi = torch.randn(B, args.m, *x0.shape[1:], device=device)
-            xt_rep = xt.unsqueeze(1).expand(-1, args.m, -1, -1, -1)
-            xt_rep = xt_rep.reshape(-1, *x0.shape[1:])
-            xi_flat = xi.reshape(-1, *x0.shape[1:])
-            t_rep = t.repeat_interleave(args.m)
-
-            x0hat = model(xt_rep, t_rep, xi_flat)
-            x0hat = x0hat.view(B, args.m, *x0.shape[1:])
-
-            conf, inter = generalized_energy_terms(
-                x0hat.view(B, args.m, -1),
-                x0.view(B, -1),
+            # Generalized energy score (eqs. (12)–(14)) shared with the toy setup.
+            loss, metrics = distributional_training_step(
+                model,
+                x0,
+                m=args.m,
                 beta=args.beta,
                 lam=args.lam,
+                w_bias=args.w_bias,
             )
-            w = sigmoid_weight(t, bias=args.w_bias).mean()
-            loss = w * (conf - (args.lam / (2.0 * (args.m - 1))) * inter)
 
             opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -105,11 +122,36 @@ def train(args: argparse.Namespace) -> None:
             opt.step()
 
             global_step += 1
-            if global_step % args.log_every == 0:
-                print(
-                    f"[epoch {epoch:03d} step {global_step:06d}] loss={loss.item():.4f} "
-                    f"conf={conf.item():.4f} inter={inter.item():.4f} w~{w.item():.3f}"
+            num_batches += 1
+            for key, value in metrics.items():
+                epoch_sums[key] += value
+
+            progress.set_postfix(
+                {
+                    "loss": f"{metrics['loss']:.4f}",
+                    "conf": f"{metrics['confidence']:.4f}",
+                    "inter": f"{metrics['interaction']:.4f}",
+                    "w~": f"{metrics['weight']:.3f}",
+                },
+                refresh=False,
+            )
+
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        "train/epoch": epoch,
+                        "train/lr": opt.param_groups[0]["lr"],
+                        **{f"train/{k}": v for k, v in metrics.items()},
+                    },
+                    step=global_step,
                 )
+
+        epoch_avg = {k: epoch_sums[k] / max(num_batches, 1) for k in epoch_sums}
+        summary = " ".join(f"{k}={epoch_avg[k]:.4f}" for k in sorted(epoch_avg))
+        print(f"[epoch {epoch:03d}] {summary}")
+
+        if wandb_run is not None:
+            wandb_run.log({f"epoch/{k}": v for k, v in epoch_avg.items()}, step=epoch)
 
         if epoch % args.ckpt_every == 0 or epoch == args.epochs:
             ckpt_name = f"model_epoch{epoch:03d}.pt"
@@ -130,6 +172,8 @@ def train(args: argparse.Namespace) -> None:
                 f"[epoch {epoch:03d}] FID={metrics['fid']:.3f} "
                 f"MMD={metrics['mmd']:.6f}"
             )
+            if wandb_run is not None:
+                wandb_run.log({f"eval/{k}": v for k, v in metrics.items()}, step=epoch)
 
     save_checkpoint(model, args, args.out, "model_final.pt")
 
@@ -154,6 +198,9 @@ def train(args: argparse.Namespace) -> None:
         grid = tv_utils.make_grid((samples + 1.0) / 2.0, nrow=grid_rows)
         tv_utils.save_image(grid, os.path.join(args.out, "samples.png"))
         print(f"Saved samples and checkpoints to {args.out}")
+
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 def evaluate(
@@ -212,7 +259,6 @@ def main() -> None:
     parser.add_argument("--m", type=int, default=8)
     parser.add_argument("--w-bias", type=float, default=0.0, dest="w_bias")
     parser.add_argument("--grad-clip", type=float, default=1.0)
-    parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=1)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=0)
@@ -234,6 +280,9 @@ def main() -> None:
     parser.add_argument("--fid-samples", type=int, default=10000, help="Number of real/fake images for FID")
     parser.add_argument("--mmd-samples", type=int, default=2048, help="Number of images used for MMD")
     parser.add_argument("--mmd-sigma", type=float, default=1.0, help="RBF kernel bandwidth for MMD")
+    parser.add_argument("--wandb", action="store_true", help="Log training to Weights & Biases")
+    parser.add_argument("--wandb-project", type=str, default="dddm")
+    parser.add_argument("--wandb-name", type=str, default=None)
     args = parser.parse_args()
 
     if args.m < 2:
