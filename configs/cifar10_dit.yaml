@@ -1,36 +1,38 @@
 # Configuration for training the CIFAR-10 DiT-backed DDDM.
+# Hyperparameters are taken from the CIFAR-10 experiment described in
+# *Distributional Diffusion Models with Scoring Rules* (Sec. 6.2 & App. D).
 data_dir: ./data
 out: ./outputs/cifar10_dit
-epochs: 10
-batch: 128
-lr: 0.0001
-weight_decay: 0.01
-beta: 0.1
-lam: 1.0
-m: 8
-w_bias: 0.0
-grad_clip: 1.0
-ckpt_every: 1
+epochs: 400        # Sec. 6.2: train the CIFAR-10 DiT for 400 epochs.
+batch: 256         # App. D.1: global batch size 256 (4×64) for CIFAR-10.
+lr: 0.0001         # App. D.1: AdamW learning rate 1e-4.
+weight_decay: 0.01 # App. D.1: weight decay used for the DiT backbone.
+beta: 0.1          # Sec. 3 & App. D: logistic weight coefficient β = 0.1.
+lam: 1.0           # Eq. (14) & App. D: λ = 1.0 for the interaction term.
+m: 8               # App. D.1: eight denoiser queries per sample.
+w_bias: 0.0        # App. D.1: no bias shift in the logistic weight.
+grad_clip: 1.0     # App. D.1: gradient clipping at norm 1.
+ckpt_every: 50     # App. D.1: checkpoints saved every 50 epochs.
 device: cuda
 seed: 0
-image_size: 32
-patch_size: 4
-embed_dim: 384
-depth: 8
-heads: 6
-time_embed: 256
-mlp_ratio: 4.0
-workers: 4
-sample_batch: 64
-sample_steps: 20
-eps_churn: 1.0
-no_augment: false
-eval_every: 1
-eval_batch: 256
-eval_samples: 1024
-fid_samples: 10000
-mmd_samples: 2048
-mmd_sigma: 1.0
+image_size: 32     # CIFAR-10 resolution (Sec. 6.2).
+patch_size: 4      # App. D.1: DiT-S/4 patching for 32×32 images.
+embed_dim: 384     # App. D.1: DiT-S/4 embedding width.
+depth: 8           # App. D.1: eight transformer blocks.
+heads: 6           # App. D.1: six self-attention heads.
+time_embed: 256    # App. D.1: time embedding dimension.
+mlp_ratio: 4.0     # App. D.1: MLP expansion ratio.
+workers: 4         # Not specified; keep implementation default.
+sample_batch: 64   # App. D.1: sample 64 images for qualitative grids.
+sample_steps: 20   # Sec. 6.2: 20-step sampler for reported FID.
+eps_churn: 0.0     # App. D.1: deterministic sampling without churn.
+no_augment: false  # Sec. 6.2: standard flip+crop augmentation enabled.
+eval_every: 400    # App. D.1: report metrics at the final checkpoint only.
+eval_batch: 256    # App. D.1: evaluation loaders use batch size 256.
+eval_samples: 50000 # Sec. 6.2: generate 50k samples for FID computation.
+fid_samples: 50000  # Sec. 6.2: reference statistics from all 50k test images.
+mmd_samples: 10000  # App. D.1: 10k samples for image MMD.
+mmd_sigma: 1.0     # App. D.1: RBF bandwidth.
 wandb: false
 wandb_project: dddm-cifar10
-wandb_name: cifar10-dit-baseline
+wandb_name: cifar10-dit-paper
