@@ -1,3 +1,4 @@
+import json
 import os
 from dataclasses import asdict, dataclass
 from typing import Optional
@@ -9,6 +10,7 @@ from .data import sample_gmm
 from .losses import generalized_energy_terms, sigmoid_weight
 from .model import DDDMMLP
 from .schedules import forward_marginal_sample
+from .utils import plot_training_curves
 
 
 @dataclass
@@ -91,7 +93,12 @@ def distributional_training_step(
     return loss, metrics
 
 
-def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
+def train_dddm(
+    config: TrainConfig,
+    outdir: str = "./out",
+    *,
+    return_history: bool = False,
+) -> DDDMMLP | tuple[DDDMMLP, dict[str, list[float | int]]]:
     """Train the distributional diffusion model."""
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
@@ -101,6 +108,7 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
     opt = torch.optim.Adam(model.parameters(), lr=config.lr)
 
     wandb_run = None
+    wandb_module = None
     if config.use_wandb:
         try:
             import wandb
@@ -114,6 +122,7 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
             name=config.wandb_run_name,
             config=asdict(config),
         )
+        wandb_module = wandb
 
     progress = tqdm(
         range(1, config.epochs + 1),
@@ -121,6 +130,8 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
         unit="step",
         dynamic_ncols=True,
     )
+
+    history: dict[str, list[float | int]] = {"step": []}
     for step in progress:
         x0 = sample_gmm(config.batch, device=device)
 
@@ -137,6 +148,10 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
         loss.backward()
         opt.step()
 
+        history["step"].append(step)
+        for key, value in metrics.items():
+            history.setdefault(key, []).append(value)
+
         if wandb_run is not None:
             wandb_run.log({f"train/{k}": v for k, v in metrics.items()}, step=step)
 
@@ -151,6 +166,34 @@ def train_dddm(config: TrainConfig, outdir: str = "./out") -> DDDMMLP:
         )
 
     torch.save({"model": model.state_dict(), "config": config.__dict__}, os.path.join(outdir, "model.pt"))
+
+    metrics_path = os.path.join(outdir, "training_metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json_history: dict[str, list[float] | list[int]] = {}
+        for key, values in history.items():
+            if key == "step":
+                json_history[key] = [int(v) for v in values]
+            else:
+                json_history[key] = [float(v) for v in values]
+        json.dump(json_history, f, indent=2)
+
+    plot_path = os.path.join(outdir, "training_dynamics.png")
+    try:
+        plot_training_curves(
+            history,
+            plot_path,
+            title="Toy DDDM training dynamics",
+            xlabel="Step",
+            x_key="step",
+        )
+    except ValueError:
+        pass
+    else:
+        if wandb_run is not None and wandb_module is not None:
+            wandb_run.log({"plots/training_dynamics": wandb_module.Image(plot_path)}, step=config.epochs)
+
     if wandb_run is not None:
         wandb_run.finish()
+    if return_history:
+        return model, history
     return model
