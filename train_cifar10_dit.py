@@ -4,7 +4,7 @@ from collections import defaultdict
 import argparse
 import json
 import os
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -21,6 +21,7 @@ from dddm.metrics import (
 from dddm.model import DDDMDiT
 from dddm.sampling import sample_dddm
 from dddm.training import distributional_training_step
+from dddm.utils import plot_training_curves
 
 
 def set_seed(seed: int) -> None:
@@ -36,9 +37,50 @@ def save_checkpoint(model: torch.nn.Module, args: argparse.Namespace, outdir: st
     torch.save(payload, os.path.join(outdir, name))
 
 
+def _serialize_history(history: Dict[str, list[float | int]]) -> dict[str, list[int] | list[float]]:
+    result: dict[str, list[int] | list[float]] = {}
+    for key, values in history.items():
+        if key in {"step", "epoch"}:
+            result[key] = [int(v) for v in values]
+        else:
+            result[key] = [float(v) for v in values]
+    return result
+
+
+def _load_config(path: str) -> dict[str, Any]:
+    try:
+        import yaml
+    except ImportError as exc:  # pragma: no cover - defensive import guard
+        raise RuntimeError(
+            "PyYAML is required to load configuration files but is not installed."
+        ) from exc
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Configuration file must define a mapping of parameters.")
+    return data
+
+
+def _apply_config(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.config is None:
+        return
+
+    config_data = _load_config(args.config)
+    for key, value in config_data.items():
+        if not hasattr(args, key):
+            raise ValueError(f"Unknown config key '{key}' in {args.config}")
+        default = parser.get_default(key)
+        current = getattr(args, key)
+        if current == default:
+            setattr(args, key, value)
+
+
 def maybe_init_wandb(args: argparse.Namespace):
     if not getattr(args, "wandb", False):
-        return None
+        return None, None
     try:
         import wandb
     except ImportError as exc:  # pragma: no cover - defensive import guard
@@ -46,11 +88,12 @@ def maybe_init_wandb(args: argparse.Namespace):
             "Weights & Biases is not installed but `--wandb` was provided."
         ) from exc
 
-    return wandb.init(
+    run = wandb.init(
         project=args.wandb_project,
         name=args.wandb_name,
         config=vars(args),
     )
+    return run, wandb
 
 
 def train(args: argparse.Namespace) -> None:
@@ -90,7 +133,11 @@ def train(args: argparse.Namespace) -> None:
     fid_embedder: InceptionEmbedding | None = None
     fid_stats: tuple[torch.Tensor, torch.Tensor] | None = None
 
-    wandb_run = maybe_init_wandb(args)
+    wandb_run, wandb_module = maybe_init_wandb(args)
+
+    train_history: Dict[str, list[float]] = {"step": []}
+    epoch_history: Dict[str, list[float]] = {"epoch": []}
+    eval_history: Dict[str, list[float]] = {"epoch": []}
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -123,7 +170,9 @@ def train(args: argparse.Namespace) -> None:
 
             global_step += 1
             num_batches += 1
+            train_history["step"].append(global_step)
             for key, value in metrics.items():
+                train_history.setdefault(key, []).append(value)
                 epoch_sums[key] += value
 
             progress.set_postfix(
@@ -150,6 +199,10 @@ def train(args: argparse.Namespace) -> None:
         summary = " ".join(f"{k}={epoch_avg[k]:.4f}" for k in sorted(epoch_avg))
         print(f"[epoch {epoch:03d}] {summary}")
 
+        epoch_history["epoch"].append(epoch)
+        for key, value in epoch_avg.items():
+            epoch_history.setdefault(key, []).append(value)
+
         if wandb_run is not None:
             wandb_run.log({f"epoch/{k}": v for k, v in epoch_avg.items()}, step=epoch)
 
@@ -172,6 +225,9 @@ def train(args: argparse.Namespace) -> None:
                 f"[epoch {epoch:03d}] FID={metrics['fid']:.3f} "
                 f"MMD={metrics['mmd']:.6f}"
             )
+            eval_history["epoch"].append(epoch)
+            for key, value in metrics.items():
+                eval_history.setdefault(key, []).append(float(value))
             if wandb_run is not None:
                 wandb_run.log({f"eval/{k}": v for k, v in metrics.items()}, step=epoch)
 
@@ -198,6 +254,62 @@ def train(args: argparse.Namespace) -> None:
         grid = tv_utils.make_grid((samples + 1.0) / 2.0, nrow=grid_rows)
         tv_utils.save_image(grid, os.path.join(args.out, "samples.png"))
         print(f"Saved samples and checkpoints to {args.out}")
+
+    # Persist and plot training dynamics.
+    train_metrics_path = os.path.join(args.out, "train_metrics.json")
+    with open(train_metrics_path, "w", encoding="utf-8") as f:
+        json.dump(_serialize_history(train_history), f, indent=2)
+
+    try:
+        train_plot_path = plot_training_curves(
+            train_history,
+            os.path.join(args.out, "train_dynamics.png"),
+            title="CIFAR-10 training dynamics",
+            xlabel="Step",
+            x_key="step",
+        )
+    except ValueError:
+        train_plot_path = None
+    else:
+        if wandb_run is not None and wandb_module is not None:
+            wandb_run.log({"plots/train_dynamics": wandb_module.Image(train_plot_path)}, step=global_step)
+
+    epoch_metrics_path = os.path.join(args.out, "epoch_metrics.json")
+    with open(epoch_metrics_path, "w", encoding="utf-8") as f:
+        json.dump(_serialize_history(epoch_history), f, indent=2)
+
+    try:
+        epoch_plot_path = plot_training_curves(
+            epoch_history,
+            os.path.join(args.out, "epoch_dynamics.png"),
+            title="CIFAR-10 epoch averages",
+            xlabel="Epoch",
+            x_key="epoch",
+        )
+    except ValueError:
+        epoch_plot_path = None
+    else:
+        if wandb_run is not None and wandb_module is not None:
+            wandb_run.log({"plots/epoch_dynamics": wandb_module.Image(epoch_plot_path)}, step=global_step)
+
+    if len(eval_history["epoch"]) > 0:
+        eval_metrics_path = os.path.join(args.out, "eval_metrics.json")
+        with open(eval_metrics_path, "w", encoding="utf-8") as f:
+            json.dump(_serialize_history(eval_history), f, indent=2)
+
+        try:
+            eval_plot_path = plot_training_curves(
+                eval_history,
+                os.path.join(args.out, "eval_dynamics.png"),
+                title="CIFAR-10 evaluation metrics",
+                xlabel="Epoch",
+                x_key="epoch",
+            )
+        except ValueError:
+            pass
+        else:
+            if wandb_run is not None and wandb_module is not None:
+                wandb_run.log({"plots/eval_dynamics": wandb_module.Image(eval_plot_path)}, step=global_step)
 
     if wandb_run is not None:
         wandb_run.finish()
@@ -248,6 +360,7 @@ def evaluate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=str, default=None, help="Optional YAML config")
     parser.add_argument("--data-dir", type=str, default="./data")
     parser.add_argument("--out", type=str, default="./cifar10_dit_out")
     parser.add_argument("--epochs", type=int, default=10)
@@ -284,6 +397,7 @@ def main() -> None:
     parser.add_argument("--wandb-project", type=str, default="dddm")
     parser.add_argument("--wandb-name", type=str, default=None)
     args = parser.parse_args()
+    _apply_config(parser, args)
 
     if args.m < 2:
         parser.error("m must be >= 2 for the generalized energy score")

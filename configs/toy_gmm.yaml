@@ -1,0 +1,15 @@
+# Configuration for training the toy 2D GMM experiment.
+out: ./outputs/toy_gmm
+epochs: 5000
+batch: 512
+beta: 0.1
+lam: 1.0
+m: 8
+w_bias: 0.0
+lr: 0.002
+steps: 20
+device: cpu
+seed: 42
+use_wandb: false
+wandb_project: dddm-toy
+wandb_name: toy-gmm-baseline

@@ -17,21 +17,31 @@ extended, and logged.
 - `dddm/sampling.py` – Algorithm 2 for drawing reverse-time samples using the
   distributional denoiser.
 - `run_example.py` – trains the 2D model on the bimodal mixture, producing
-  scatter plots and MMD metrics.
+  scatter plots, MMD metrics, and training-curve plots (also uploaded to W&B
+  when enabled).
 - `train_cifar10_dit.py` – end-to-end CIFAR-10 training with a DiT backbone,
-  epoch-wise metrics, optional FID/MMD evaluation, and W&B/TQDM logging.
+  epoch-wise metrics, optional FID/MMD evaluation, rich logging, and automatic
+  generation of training/evaluation plots both locally and on W&B.
+- `configs/` – ready-to-use YAML configs for the toy and CIFAR-10 experiments.
+- `scripts/` – thin shell wrappers (`run_toy.sh`, `run_cifar10.sh`) that launch
+  the experiments with the default configs.
 
 ## Quick start: 2D toy problem
 ```bash
 pip install -r requirements.txt
+./scripts/run_toy.sh               # uses configs/toy_gmm.yaml
+# or override on the CLI:
 python run_example.py --epochs 2000 --batch 512 --beta 0.1 --lam 1.0 --m 8 --steps 20
 ```
-The command shows a live `tqdm` progress bar, saves checkpoints under
-`./out`, and optionally logs to Weights & Biases with `--wandb` (no extra print
-spam – the progress bar and W&B dashboards carry the metrics).
+Both entry points show a live `tqdm` progress bar, save checkpoints under
+`./out`, emit `training_metrics.json` and `training_dynamics.png`, and
+optionally log to Weights & Biases with `--wandb` (no extra print spam – the
+progress bar, saved plots, and W&B dashboards carry the metrics).
 
 ## Training on CIFAR-10
 ```bash
+./scripts/run_cifar10.sh           # uses configs/cifar10_dit.yaml
+# or customise inline:
 python train_cifar10_dit.py \
     --data-dir ./data \
     --out ./cifar10_dit_out \
@@ -46,6 +56,8 @@ Key features:
 - `--eval-every` performs FID/MMD evaluation, reporting and logging the scores.
 - Reproducibility through `--seed`, gradient clipping via `--grad-clip`, and
   on-the-fly sampling with `--sample-batch` & `--sample-steps`.
+- Automatic `train/epoch/eval` histories saved under the output directory as
+  JSON plus `*.png` plots, mirrored to W&B as images for convenient dashboards.
 
 ## Faithfulness to the paper
 - **Forward corruption** – `dddm.schedules.forward_marginal_sample` applies
@@ -71,7 +83,8 @@ Key features:
   loops informative without flooding the console.
 - **Weights & Biases** – both training entry points expose a flag to enable W&B
   logging. Per-step training metrics use the `train/*` namespace, epoch summaries
-  land under `epoch/*`, and evaluation statistics under `eval/*`.
+  land under `epoch/*`, evaluation statistics under `eval/*`, and the generated
+  training/evaluation plots are uploaded as images in the `plots/*` namespace.
 
 ## License
 MIT – see `LICENSE`.
