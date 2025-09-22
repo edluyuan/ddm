@@ -45,11 +45,21 @@ def gaussian_bridge_mu_sigma(
     a_s, sig_s = alpha_sigma(s)
     a_t, sig_t = alpha_sigma(t)
     eps = 1e-8  # avoid division by zero
-    r11 = (a_t / (a_s + eps)) * ((sig_s**2) / (sig_t**2 + eps))
-    r12 = (a_t / (a_s + eps)) * ((sig_s**2) / (sig_t**2 + eps))**2
-    r21 = (a_t / (a_s + eps)) ** 2 * ((sig_s**2) / (sig_t**2 + eps))
-    r22 = (a_t / (a_s + eps)) ** 2 * ((sig_s**2) / (sig_t**2 + eps))**2
-    r01 = (sig_s**2) / (sig_t**2 + eps)
+    ratio = sig_s / (sig_t + eps)
+    alpha_ratio = a_t / (a_s + eps)
+
+    # NOTE: The bridge coefficients follow eq. (4) in the paper. The previous
+    # implementation accidentally squared the σ_s / σ_t factors, which caused the
+    # conditional mean to ignore the current sample x_t when eps_churn=0. That in
+    # turn made the sampler rely almost entirely on the predicted x̂₀, hurting
+    # sample quality (high FID scores). Using the linear ratios restores the
+    # correct deterministic bridge when eps_churn → 0:
+    #     μ = (σ_s / σ_t) x_t + (α_s - (σ_s / σ_t) α_t) x̂₀.
+    r11 = alpha_ratio * ratio
+    r12 = alpha_ratio * (ratio**2)
+    r21 = alpha_ratio * ratio
+    r22 = alpha_ratio * (ratio**2)
+    r01 = ratio
     e2 = eps_churn**2
 
     def bcast(x: torch.Tensor) -> torch.Tensor:
